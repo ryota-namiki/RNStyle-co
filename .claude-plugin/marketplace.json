@@ -1,0 +1,24 @@
+{
+  "name": "cc-company",
+  "owner": {
+    "name": "Shin-sibainu"
+  },
+  "metadata": {
+    "description": "秘書から始める仮想組織プラグイン。3ステップで即運用開始。"
+  },
+  "plugins": [
+    {
+      "name": "company",
+      "source": "./plugins/company",
+      "description": "秘書から始める仮想組織スキル。3ステップで即運用開始、部署は必要に応じて自然に増える。",
+      "version": "2.0.0",
+      "author": {
+        "name": "Shin-sibainu"
+      },
+      "repository": "https://github.com/Shin-sibainu/cc-company",
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["company", "organization", "secretary", "productivity", "management"]
+    }
+  ]
+}
