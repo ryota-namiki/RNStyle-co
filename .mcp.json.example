@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "freee": {
+      "command": "npx",
+      "args": ["-y", "freee-mcp"],
+      "env": {
+        "FREEE_CLIENT_ID": "${FREEE_CLIENT_ID}",
+        "FREEE_CLIENT_SECRET": "${FREEE_CLIENT_SECRET}"
+      }
+    }
+  }
+}

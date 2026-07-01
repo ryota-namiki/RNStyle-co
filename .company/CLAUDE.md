@@ -16,11 +16,17 @@
 │   ├── inbox/
 │   ├── todos/
 │   └── notes/
-└── marketing/
+├── marketing/
+│   ├── CLAUDE.md
+│   ├── content-plan/
+│   └── campaigns/
+└── finance/
     ├── CLAUDE.md
-    ├── content-plan/
-    └── campaigns/
+    ├── invoices/
+    └── expenses/
 ```
+
+> 経理（finance）は freee 会計と連携する。実際の freee 操作は `.claude/agents/keiri.md`（keiri サブエージェント）に委譲し、freee MCP サーバー経由で行う。
 
 
 
@@ -30,6 +36,7 @@
 |------|---------|------|
 | 秘書室 | secretary | 窓口・相談役。TODO管理、壁打ち、メモ。常設。 |
 | マーケティング | marketing | コンテンツ企画、SNS戦略（Threads/X）、キャンペーン管理。 |
+| 経理 | finance | 請求書・経費・売上管理。freee 会計連携（keiri サブエージェントに委譲）。 |
 
 
 ## 運営ルール

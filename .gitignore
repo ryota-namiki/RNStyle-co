@@ -3,3 +3,9 @@
 node_modules/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+
+# freee クレデンシャル（絶対にコミットしない）
+.mcp.json
+.env
+.env.local
+.env.*.local
