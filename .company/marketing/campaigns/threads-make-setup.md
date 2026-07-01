@@ -9,23 +9,35 @@ status: planning
 ## 全体フロー
 
 ```
-[スクリプト実行] → JSON生成 → Googleドライブ同期
-                                    ↓
-                              [Make シナリオ]
-                                    ↓
-                    ┌───────────────────────────┐
-                    │  JSONを読み込み             │
-                    │  ↓                         │
-                    │  親投稿 → Threads API       │
-                    │  ↓                         │
-                    │  Wait (delay_minutes)       │
-                    │  ↓                         │
-                    │  子投稿1 → リプライ          │
-                    │  ↓（子が2つの場合）          │
-                    │  Wait (delay_minutes)       │
-                    │  ↓                         │
-                    │  子投稿2 → リプライ          │
-                    └───────────────────────────┘
+[日曜: スクリプト実行]
+  generate_posts.py --sheet-id XXXX --credentials credentials.json
+        ↓
+  JSON生成 + Google Sheetsに自動書き込み
+        ↓
+  ┌─────────────────────────────────────┐
+  │         Google Sheets               │
+  │  id | status | date | time | ...    │
+  │  001 | pending | 04-07 | 07:32 | ...│
+  │  002 | pending | 04-07 | 21:31 | ...│
+  │  ...                                │
+  └─────────────────────────────────────┘
+        ↓ Make が毎日 7:20 / 21:20 に読み込み
+  ┌─────────────────────────────────────┐
+  │         Make シナリオ               │
+  │  Sheets検索（当日・当該時刻・pending）│
+  │  ↓                                  │
+  │  親投稿 → Threads API               │
+  │  ↓                                  │
+  │  Wait (child1_delay_min 分)         │
+  │  ↓                                  │
+  │  子投稿1 → リプライ                  │
+  │  ↓（child2_textがある場合）          │
+  │  Wait (child2_delay_min 分)         │
+  │  ↓                                  │
+  │  子投稿2 → リプライ                  │
+  │  ↓                                  │
+  │  Sheetsを更新: status=posted        │
+  └─────────────────────────────────────┘
 ```
 
 ---
@@ -51,34 +63,94 @@ BASE_URL      = https://graph.threads.net/v1.0
 
 ---
 
-## Step 2: Makeシナリオの構成
+## Step 2: Google Sheetsの準備
+
+### 2-1. スプレッドシート作成
+
+新規スプレッドシートを作成し、シート名を `posts` にする。
+ヘッダーはスクリプトが自動挿入するため手動設定不要。
+
+### 2-2. サービスアカウント作成
+
+1. Google Cloud Console でプロジェクト作成
+2. 「Google Sheets API」「Google Drive API」を有効化
+3. 「サービスアカウント」を作成 → JSON鍵をダウンロード
+4. ファイル名を `credentials.json` にしてプロジェクトルートに配置
+5. スプレッドシートをサービスアカウントのメールアドレスに**編集者として共有**
+
+### 2-3. スプレッドシートIDの確認
+
+```
+URL: https://docs.google.com/spreadsheets/d/【ここがID】/edit
+```
+
+### 2-4. カラム構成（自動生成）
+
+| 列 | カラム名 | 内容 |
+|---|---|---|
+| A | id | post-001 など |
+| B | status | pending / posted / skipped |
+| C | scheduled_date | 2026-04-07（Makeのフィルタ用） |
+| D | scheduled_time | 07:32（Makeのフィルタ用） |
+| E | scheduled_at | ISO8601フル |
+| F | pillar | pain / before_after 等 |
+| G | theme | 投稿テーマ |
+| H | parent_text | 親投稿テキスト |
+| I | child1_delay_min | 遅延（分） |
+| J | child1_text | 子投稿1テキスト |
+| K | child2_delay_min | 遅延（分）※なければ空 |
+| L | child2_text | 子投稿2テキスト※なければ空 |
+| M | posted_at | **Makeが記入** |
+| N | parent_post_id | **Makeが記入** |
+
+---
+
+## Step 3: Makeシナリオの構成
 
 ### モジュール一覧（順番通り）
 
 ```
-1. [Trigger] Google Drive: Watch Files in a Folder
-2. [Google Drive] Download a File
-3. [JSON] Parse JSON
-4. [Iterator] Iterate over posts[]
-5. ── ここからポスト1件ずつ ──
-6. [HTTP] 親投稿コンテナ作成
-7. [HTTP] 親投稿パブリッシュ → post_id 取得
-8. [Sleep] child[0].delay_minutes 分待機
-9. [HTTP] 子投稿1コンテナ作成（reply_to_id = post_id）
-10. [HTTP] 子投稿1パブリッシュ
-11. [Router] children[1] が存在するか分岐
-    → Yes:
-      12. [Sleep] child[1].delay_minutes 分待機
-      13. [HTTP] 子投稿2コンテナ作成
-      14. [HTTP] 子投稿2パブリッシュ
-    → No: スキップ
+1. [Trigger] Schedule: 毎日 7:20 と 21:20（月〜土）
+2. [Google Sheets] Search Rows
+   → scheduled_date = today AND scheduled_time = "07:32"（or "21:31"）AND status = "pending"
+3. [Router] 該当行があるか分岐
+   → なし: 終了
+   → あり: 続行
+4. [HTTP] 親投稿コンテナ作成
+5. [HTTP] 親投稿パブリッシュ → parent_post_id 取得
+6. [Google Sheets] Update Row: status = "in_progress"
+7. [Sleep] child1_delay_min 分待機
+8. [HTTP] 子投稿1コンテナ作成（reply_to_id = parent_post_id）
+9. [HTTP] 子投稿1パブリッシュ
+10. [Router] child2_text が空でないか分岐
+    → あり:
+      11. [Sleep] child2_delay_min 分待機
+      12. [HTTP] 子投稿2コンテナ作成（reply_to_id = parent_post_id）
+      13. [HTTP] 子投稿2パブリッシュ
+    → なし: スキップ
+14. [Google Sheets] Update Row:
+    status = "posted", posted_at = now, parent_post_id = {{5.id}}
 ```
 
 ---
 
-## Step 3: 各HTTPモジュールの設定
+## Step 4: 各モジュールの設定
 
-### 6. 親投稿コンテナ作成
+### 2. Google Sheets - Search Rows（朝シナリオ）
+
+```
+Spreadsheet ID: {{YOUR_SPREADSHEET_ID}}
+Sheet: posts
+Filter:
+  Column C (scheduled_date) = {{formatDate(now; "YYYY-MM-DD")}}
+  Column D (scheduled_time) = "07:32"
+  Column B (status)         = "pending"
+Limit: 1
+```
+
+> 夜シナリオは scheduled_time = "21:31" に変えるだけ。
+
+### 4. HTTP - 親投稿コンテナ作成
 
 ```
 Method: POST
@@ -86,7 +158,7 @@ URL: https://graph.threads.net/v1.0/{{USER_ID}}/threads
 
 Body (JSON):
 {
-  "text": "{{parent.text}}",
+  "text": "{{2.H}}",           ← Sheetsの H列 (parent_text)
   "media_type": "TEXT",
   "access_token": "{{ACCESS_TOKEN}}"
 }
@@ -94,7 +166,7 @@ Body (JSON):
 Response: { "id": "CREATION_ID" }
 ```
 
-### 7. 親投稿パブリッシュ
+### 5. HTTP - 親投稿パブリッシュ
 
 ```
 Method: POST
@@ -102,21 +174,21 @@ URL: https://graph.threads.net/v1.0/{{USER_ID}}/threads_publish
 
 Body (JSON):
 {
-  "creation_id": "{{6.id}}",
+  "creation_id": "{{4.id}}",
   "access_token": "{{ACCESS_TOKEN}}"
 }
 
 Response: { "id": "POST_ID" }  ← これがreply_to_idになる
 ```
 
-### 8. Sleep（子投稿1の前）
+### 7. Sleep（子投稿1の前）
 
 ```
-Duration: {{children[0].delay_minutes}} 分
-（デフォルト60分 = 3600秒）
+Duration: {{2.I}} 分（Sheetsの I列 child1_delay_min）
+（デフォルト60分）
 ```
 
-### 9. 子投稿1コンテナ作成
+### 8. HTTP - 子投稿1コンテナ作成
 
 ```
 Method: POST
@@ -124,14 +196,14 @@ URL: https://graph.threads.net/v1.0/{{USER_ID}}/threads
 
 Body (JSON):
 {
-  "text": "{{children[0].text}}",
+  "text": "{{2.J}}",           ← Sheetsの J列 (child1_text)
   "media_type": "TEXT",
-  "reply_to_id": "{{7.id}}",
+  "reply_to_id": "{{5.id}}",  ← 親のpost_id
   "access_token": "{{ACCESS_TOKEN}}"
 }
 ```
 
-### 10. 子投稿1パブリッシュ
+### 9. HTTP - 子投稿1パブリッシュ
 
 ```
 Method: POST
@@ -139,19 +211,19 @@ URL: https://graph.threads.net/v1.0/{{USER_ID}}/threads_publish
 
 Body (JSON):
 {
-  "creation_id": "{{9.id}}",
+  "creation_id": "{{8.id}}",
   "access_token": "{{ACCESS_TOKEN}}"
 }
 ```
 
-### 13. 子投稿2コンテナ作成（存在する場合）
+### 12. HTTP - 子投稿2コンテナ作成（child2_text が空でない場合）
 
 ```
 Body (JSON):
 {
-  "text": "{{children[1].text}}",
+  "text": "{{2.L}}",           ← Sheetsの L列 (child2_text)
   "media_type": "TEXT",
-  "reply_to_id": "{{7.id}}",   ← 親のpost_idにリプライ（兄弟ではなく親に）
+  "reply_to_id": "{{5.id}}",  ← 親のpost_idにリプライ（兄弟ではなく親に）
   "access_token": "{{ACCESS_TOKEN}}"
 }
 ```
@@ -159,31 +231,41 @@ Body (JSON):
 > **ポイント**: 子投稿2も `reply_to_id` は親のIDを使う。
 > 子→子へのリプライではなく、親に対して兄弟リプライする形。
 
+### 14. Google Sheets - Update Row（投稿完了記録）
+
+```
+Spreadsheet ID: {{YOUR_SPREADSHEET_ID}}
+Sheet: posts
+Row number: {{2.rowNumber}}
+Values:
+  Column B (status):         "posted"
+  Column M (posted_at):      {{formatDate(now; "YYYY-MM-DD HH:mm:ss")}}
+  Column N (parent_post_id): {{5.id}}
+```
+
 ---
 
-## Step 4: スケジューリング
+## Step 5: スケジューリング（Make トリガー設定）
 
 ### 投稿スケジュール
 ```
-月〜金 × 12:00 / 20:00 = 1日2投稿 × 週5日 = 週10投稿
+月〜土 × 7:32 / 21:31 = 1日2投稿 × 週6日 = 週12投稿
+日曜日: 翌週分（12本）を生成してSheetsに自動書き込み
 ```
 
-### Make シナリオのトリガー設定（推奨）
+### Make シナリオ2本構成
 
 ```
-スケジュール: 毎日 11:50 と 19:50 に起動（月〜金）
-  → 11:50起動 → 12:00投稿の親を作成 → 60分後に子投稿
-  → 19:50起動 → 20:00投稿の親を作成 → 60分後に子投稿
+シナリオA（朝）: 毎日 7:20 起動（月〜土）
+  → Sheets検索: scheduled_date=today, scheduled_time="07:32", status="pending"
+  → 投稿 → 完了記録
+
+シナリオB（夜）: 毎日 21:20 起動（月〜土）
+  → Sheets検索: scheduled_date=today, scheduled_time="21:31", status="pending"
+  → 投稿 → 完了記録
 ```
 
-フィルタ条件（Makeの Filter モジュール）:
-```
-scheduled_at の日付  = today
-AND scheduled_at の時刻 = "12:00" or "20:00"（起動時刻に応じて）
-AND status = "pending"
-```
-
-### JSONファイルの読み込み方式
+### JSONファイルの読み込み方式（旧方式 / 参考）
 
 ```
 - トリガー: Google Drive - Watch Files in a Folder
@@ -194,39 +276,32 @@ AND status = "pending"
 
 ---
 
-## Step 5: 生成サイクル（5日ごと）
+## Step 5: 生成サイクル（毎週日曜）
 
 ```
-生成 → 5日間投稿 → 生成 → 5日間投稿 → ...
-
-[月] 生成実行（10本 = 月〜金分）
+[日曜] 翌週分を生成（12本 = 月〜土分）
  ↓
-[月〜金] Makeが毎日12:00/20:00に自動投稿
+[月〜土] Makeが毎日 7:32 / 21:31 に自動投稿
  ↓
-[土] 次の生成（翌週月曜〜金曜分）
- ↓
-繰り返し
+[日曜] 翌週分を生成 → 繰り返し
 ```
 
 ### 実行コマンド
 
 ```bash
-# 自動（Claude Codeクロン: 5日ごと8:00に自動実行）
-# ↑ セットアップ済み（Claude Codeセッション中のみ有効）
-
-# 手動実行
+# 手動実行（毎週日曜に実行）
 cd "/Users/ryota/Library/CloudStorage/Google Drive/.../RNstyle co."
-python scripts/threads/generate_posts.py         # 翌週月曜から10本
+python scripts/threads/generate_posts.py         # 翌週月曜から12本
 
 # 特定日から生成
-python scripts/threads/generate_posts.py --from 2026-04-14
+python scripts/threads/generate_posts.py --from 2026-04-07
 
 # 確認
 cat .company/marketing/content-plan/threads-posts-2026-04-07.json | jq '.posts[0]'
 ```
 
-> **注意**: Claude Codeクロンはセッション終了で消えます（7日上限）。
-> 恒久的な自動生成には Mac の launchd か Make 自体のスケジューラーを使ってください。
+> **注意**: Claude Codeクロン（日曜8:17）はセッション終了で消えます（最大7日）。
+> 恒久的な自動生成には Mac の launchd か Make 自体のスケジューラーを使ってください。「launchd設定して」と言えばセットアップします。
 
 ---
 
