@@ -1,4 +1,3 @@
-.claude/
 .DS_Store
 node_modules/
 docs/.vitepress/cache/
@@ -9,3 +8,14 @@ docs/.vitepress/dist/
 .env
 .env.local
 .env.*.local
+
+# .claude — ローカル専用（機密・ランタイム・テナント固有情報）
+.claude/settings.local.json
+.claude/settings.json
+.claude/agent-memory/
+.claude/scheduled_tasks.lock
+
+# freee-api-skill — 巨大リファレンス（npx skills add freee/freee-mcp で再取得）
+.claude/skills/freee-api-skill/references/
+.claude/skills/freee-api-skill/sign-references/
+.claude/skills/freee-api-skill/evals/
